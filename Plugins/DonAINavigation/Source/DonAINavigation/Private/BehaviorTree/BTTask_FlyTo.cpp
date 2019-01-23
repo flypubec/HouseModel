@@ -89,7 +89,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 		LastRequestTimestamps.Add(pawn, currentTime); //LastRequestTimestamp = currentTime;
 		*/
 	NavigationManager =  UDonNavigationHelper::DonNavigationManagerForActor(pawn);
-	if (NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
+	if (NavigationManager && NavigationManager->bMultiThreadingEnabled && NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
 		return EBTNodeResult::Failed; // early exit instead of going through the manager's internal checks and fallback via HandleTaskFailure (which isn't appropriate here)
 	
 	// Validate internal state:
@@ -242,6 +242,11 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 
 	APawn* pawn = OwnerComp.GetAIOwner()->GetPawn();
 	NavigationManager = UDonNavigationHelper::DonNavigationManagerForActor(pawn);	
+	if (!NavigationManager)
+	{
+		HandleTaskFailureAndExit(OwnerComp, NodeMemory);
+		return;
+	}
 
 	if (EDonNavigationQueryStatus::InProgress == myMemory->QueryResults.QueryStatus)
 		return;
@@ -289,7 +294,7 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 		break;
 
 	default: // currently covers "Unscheduled" which in turn is acting as the "In Progress" state in the current flow
-		if (!NavigationManager->HasTask(pawn))
+		if (NavigationManager->bMultiThreadingEnabled && !NavigationManager->HasTask(pawn))
 			HandleTaskFailureAndExit(OwnerComp, NodeMemory);
 	}
 }
@@ -308,6 +313,8 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 		HandleTaskFailureAndExit(OwnerComp, (uint8*) (MyMemory)); // observed after recent multi-threading rewrite. Need to watch this branch closely and understand why it occurs!
 		return;
 	}
+
+	MyMemory->TimeNavigating += DeltaSeconds;
 	
 	FVector flightDirection = queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex] - pawn->GetActorLocation();
 
@@ -375,10 +382,32 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 					//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment %d, %s"), MyMemory->solutionTraversalIndex, *nextPoint.ToString());
 
 					IDonNavigator::Execute_OnNextSegment(pawn, nextPoint);
-				}				
+				}		
+				MyMemory->TimeNavigating = 0;
 			}
 			
 		}
+	}
+	else
+	if (MaxTimeBeforeTeleport && MyMemory->TimeNavigating > MaxTimeBeforeTeleport)
+	{
+		MyMemory->TimeNavigating = 0;
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Navigation timed-out (Actor probably blocked) for %s. Teleporting to next Segment"), *pawn->GetName());
+		pawn->SetActorLocation(queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex], false);
+
+		/*
+		MyMemory->solutionTraversalIndex++;
+		if (MyMemory->solutionTraversalIndex < queryResults.PathSolutionOptimized.Num())
+		{
+			FVector nextPoint = queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex];
+			IDonNavigator::Execute_OnNextSegment(pawn, nextPoint);
+		}
+		else
+		{
+			HandleTaskFailureAndExit(OwnerComp, (uint8*)MyMemory);
+			return;
+		}
+		*/
 	}
 }
 
@@ -526,6 +555,8 @@ bool UBTTask_FlyTo::TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWra
 	{
 		FVector flightDestination = blackboard->GetValueAsVector(FlightLocationKey.SelectedKeyName);
 		NavigationManager = UDonNavigationHelper::DonNavigationManagerForActor(pawn);
+		if (!NavigationManager)
+			return false;
 
 		bool bLocationValid = !NavigationManager->IsLocationBeneathLandscape(flightDestination);
 		if(bLocationValid)

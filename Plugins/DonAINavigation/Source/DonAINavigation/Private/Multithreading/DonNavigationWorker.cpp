@@ -58,15 +58,20 @@ bool FDonNavigationWorker::Init()
 uint32 FDonNavigationWorker::Run()
 {
 	FPlatformProcess::Sleep(0.03f);
+	UWorld* const World = Manager->GetWorld();
+	if (!World)
+		return 0;
+	float oldTimeSeconds = World->GetTimeSeconds();
 
-	while (StopTaskCounter.GetValue() == 0)
+	while (World && StopTaskCounter.GetValue() == 0)
 	{
 		//Manager->ReceiveAsyncAbortRequests();
 		Manager->ReceiveAsyncNavigationTasks();		
 		Manager->ReceiveAsyncCollisionTasks();
 
-		SolveNavigationTasks();
-
+		float DeltaSeconds = World->GetTimeSeconds() - oldTimeSeconds;
+		oldTimeSeconds += DeltaSeconds;
+		SolveNavigationTasks(DeltaSeconds);
 		//FPlatformProcess::Sleep(0.2f);
 	}
 	return 0;
@@ -77,9 +82,9 @@ void FDonNavigationWorker::Stop()
 	StopTaskCounter.Increment();
 }
 
-void FDonNavigationWorker::SolveNavigationTasks()
+void FDonNavigationWorker::SolveNavigationTasks(float DeltaSeconds)
 {
-	Manager->TickScheduledPathfindingTasks_Safe(0.f, MaxPathSolverIterations);
+	Manager->TickScheduledPathfindingTasks_Safe(DeltaSeconds, MaxPathSolverIterations);
 
-	Manager->TickScheduledCollisionTasks_Safe(0.f, MaxCollisionSolverIterations);
+	Manager->TickScheduledCollisionTasks_Safe(DeltaSeconds, MaxCollisionSolverIterations);
 }

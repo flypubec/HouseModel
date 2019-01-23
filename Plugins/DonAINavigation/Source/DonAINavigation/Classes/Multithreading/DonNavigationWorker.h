@@ -40,7 +40,7 @@ public:
 private:
 
 	// Perform work:
-	void SolveNavigationTasks();
+	void SolveNavigationTasks(float DeltaSeconds);
 	
 	int32 MaxPathSolverIterations;
 	int32 MaxCollisionSolverIterations;

@@ -148,6 +148,7 @@ void ADonNavigationManager::ReceiveAsyncResults()
 	{
 		FDonNavigationQueryTask task;
 		CompletedNavigationTasks.Dequeue(task);
+
 		task.BroadcastResult();
 
 		ActiveNavigationTaskOwners.Remove(task.Data.Actor.Get());
@@ -161,7 +162,9 @@ void ADonNavigationManager::ReceiveAsyncResults()
 	while (!CompletedCollisionTasks.IsEmpty())
 	{
 		FDonNavigationDynamicCollisionTask task;
+
 		CompletedCollisionTasks.Dequeue(task);
+
 		task.BroadcastResult();
 
 		ActiveCollisionTaskOwners.Remove(task.MeshId.Mesh.Get());
@@ -1231,7 +1234,7 @@ void ADonNavigationManager::Debug_DrawVolumesAroundPoint(FVector Location, int32
 					FColor color = canNavigate ? FColor::Green : FColor::Red;
 					float lineThickness = canNavigate ? LineThickness : LineThickness / 2;
 					FVector extents = canNavigate ? NavVolumeExtent() : NavVolumeExtent() * 0.95f;
-					DrawDebugVoxel_Safe(GetWorld(), volumeToRender.Location, extents, color, DrawPersistentLines, 0, Duration, DebugVoxelsLineThickness);
+					DrawDebugVoxel_Safe(GetWorld(), volumeToRender.Location, extents, color, DrawPersistentLines, 0, Duration, LineThickness);
 				}
 			}
 		}
@@ -1517,31 +1520,41 @@ static bool PathSolutionFromVolumeTrajectoryMap(FDonNavigationVoxel* OriginVolum
 	
 }
 
-FDonNavigationVoxel* ADonNavigationManager::GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep)
+FDonNavigationVoxel* ADonNavigationManager::GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep, TMap<FDonNavigationVoxel*, int>& VoxelsVisited)
 {
 	if (CurrentDepth > NeighborSearchMaxDepth)
 		return NULL;
 
-	FHitResult hit;
+	int* DepthVisited = VoxelsVisited.Find(Volume);
+	if (DepthVisited && (*DepthVisited <= CurrentDepth))
+		return NULL;
+
 	const auto& neighbors = FindOrSetupNeighborsForVolume(Volume);
 
-	for (auto neighbor : neighbors)
+	if (!DepthVisited)
 	{
-		if (!CanNavigate(neighbor))
-			continue;
+		FHitResult hit;
 
-		if (!bShouldSweep)
-			return neighbor;
-		else if (IsDirectPathLineSweep(CollisionComponent, Location, neighbor->Location, hit, bConsiderInitialOverlaps, CollisionShapeInflation))
-			return neighbor;
+		for (auto neighbor : neighbors)
+		{
+			if (!CanNavigate(neighbor))
+				continue;
+
+			if (!bShouldSweep)
+				return neighbor;
+			else if (IsDirectPathLineSweep(CollisionComponent, Location, neighbor->Location, hit, bConsiderInitialOverlaps, CollisionShapeInflation))
+				return neighbor;
+		}
 	}
+
+	VoxelsVisited.Add(Volume, CurrentDepth);
 
 	// No suitable volume found, testing neighbors of neighbors:
 	for (auto neighbor : neighbors)
 	{
 		// need to optimize redundancy. A large number of voxels will get queried multiple times due to multi-neighbor relationships. Consider maintaining a hash (TSet) of visited neighbors
 		// @Bug - the function below should actually use "neighbor" and not "Volume"! As this needs more testing, the change is reserved for a future update.
-		auto bestVolume = GetBestNeighborRecursive(Volume, CurrentDepth + 1, NeighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep);
+		auto bestVolume = GetBestNeighborRecursive(neighbor, CurrentDepth + 1, NeighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep, VoxelsVisited);
 		if (bestVolume)
 			return bestVolume;
 	}
@@ -1590,27 +1603,33 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	// never find the "closest navigable neighbor" and your pathfinding request will simply fail.
 	//
 
-	TArray<FOverlapResult> outOverlaps;	
-	if (bShouldSweep)
-	{
-		FCollisionObjectQueryParams objectParams = VoxelCollisionObjectParams;
-		objectParams.AddObjectTypesToQuery(CollisionComponent->GetCollisionObjectType());
-		FCollisionQueryParams queryParams = VoxelCollisionQueryParams;
-		queryParams.AddIgnoredComponent(CollisionComponent);
-		bInitialPositionCollides = GetWorld()->OverlapMultiByObjectType(outOverlaps, Location, FQuat::Identity, objectParams, CollisionComponent->GetCollisionShape(1.f), queryParams);
+	//milky - not necessary as it is already covered in sweep check DirectPathLinesweep with bConsiderInitialOverlaps set to TRUE
+	//TArray<FOverlapResult> outOverlaps;	
+	//if (bShouldSweep)
+	//{
+	//	FCollisionObjectQueryParams objectParams = VoxelCollisionObjectParams;
+	//	objectParams.AddObjectTypesToQuery(CollisionComponent->GetCollisionObjectType());
+	//	FCollisionQueryParams queryParams = VoxelCollisionQueryParams;
+	//	queryParams.AddIgnoredComponent(CollisionComponent);
+	//	bInitialPositionCollides = GetWorld()->OverlapMultiByObjectType(outOverlaps, Location, FQuat::Identity, objectParams, CollisionComponent->GetCollisionShape(1.f), queryParams);
 
-		if (bInitialPositionCollides)
-			return NULL;
-	}
+	//	if (bInitialPositionCollides)
+	//		return NULL;
+	//}
 
 	// 2 a) First we start with simple heuristics based checks for the closest accessible neighbor:
-	static const int32 neighborGuessList = 9;
+	static const int32 neighborGuessList = 17;
 	static const int32 expansionStepSize = 2;
 	static const int32 numIterations = 2;
 
-	const int xGuessList[neighborGuessList] = { 0,  2,  2, -2, -2, -2,  2,  0, -2 };
-	const int yGuessList[neighborGuessList] = { 0,  0,  2,  0, -2,  2, -2,  0, -2 };
-	const int zGuessList[neighborGuessList] = { 1,  1,  1,  1,  1,  1,  1, -1, -1 };
+	//milky - improved heuristics
+	const int xGuessList[neighborGuessList] = { 1, 1, 1, -1, -1, -1, 0, 0,  0,  2,  2, -2, -2, -2,  2,  0, -2 };
+	const int yGuessList[neighborGuessList] = { 0, 1, -1, 0, 1, -1, 1, -1, 0,  0,  2,  0, -2,  2, -2,  0, -2 };
+	const int zGuessList[neighborGuessList] = { 0, 0, 0, 0, 0, 0, 0, 0, 1,  1,  1,  1,  1,  1,  1, -1, -1 };
+
+	//static const int32 xGuessList[neighborGuessList] = { 0,  2,  2, -2, -2, -2,  2,  0, -2 };
+	//static const int32 yGuessList[neighborGuessList] = { 0,  0,  2,  0, -2,  2, -2,  0, -2 };
+	//static const int32 zGuessList[neighborGuessList] = { 1,  1,  1,  1,  1,  1,  1, -1, -1 };
 
 	for (int32 step = 1; step <= numIterations; step++)
 	{
@@ -1629,8 +1648,11 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	}
 	
 	// 2 b) So we still haven't found an ideal neighbor. It's time to methodically scan for best neighbors:
-	const int32 neighborSearchMaxDepth = 2;
-	auto result = GetBestNeighborRecursive(volume, 0, neighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep);	
+	const int32 neighborSearchMaxDepth = 5;
+	TMap<FDonNavigationVoxel*, int> VoxelsVisited;
+	FDonNavigationVoxel* result;
+
+	result = GetBestNeighborRecursive(volume, 0, neighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep, VoxelsVisited);
 
 	if (result)
 		return result;
@@ -1969,7 +1991,7 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 		PathSolutionRaw.Add(Destination);
 		PathSolutionOptimized = PathSolutionRaw;
 
-		VisualizeSolution(Origin, Destination, PathSolutionRaw, PathSolutionOptimized, DebugParams);
+		VisualizeSolution(Origin, Destination, PathSolutionRaw, PathSolutionOptimized, DebugParams, FColor::Green);
 
 		return true;
 	}
@@ -2124,13 +2146,14 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	// Do we have direct access to the goal?
 	FHitResult hitResult;
 	const bool bFindInitialOverlaps = true;
+
 	if (IsDirectPathLineSweep(CollisionComponent, Origin, Destination, hitResult, bFindInitialOverlaps))
 	{	
 		FDonNavigationQueryTask task(FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, bIsUnbound ? NULL : VolumeAt(Origin), bIsUnbound ? NULL : VolumeAt(Destination), Origin, Destination, FDonVoxelCollisionProfile()), ResultHandlerDelegate, DynamicCollisionListener);
 
 		PackageDirectSolution(task);
 
-		VisualizeSolution(task.Data.Origin, task.Data.Destination, task.Data.PathSolutionRaw, task.Data.PathSolutionOptimized, task.Data.DebugParams);
+		VisualizeSolution(task.Data.Origin, task.Data.Destination, task.Data.PathSolutionRaw, task.Data.PathSolutionOptimized, task.Data.DebugParams, FColor::Green);
 
 		// call success delegate immediately
 		task.Data.QueryStatus = EDonNavigationQueryStatus::Success;
@@ -2257,6 +2280,7 @@ void ADonNavigationManager::ReceiveAsyncNavigationTasks()
 			AbortPathfindingTask_Internal(newlyArrivedTask.Data.Actor.Get());
 
 #if DEBUG_DoNAI_THREADS
+			auto actor = newlyArrivedTask.Data.Actor.Get();
 			UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new abort request"), actor ? *actor->GetName() : *FString("Unknown"));
 #endif //DEBUG_DoNAI_THREADS*/
 		}
@@ -2286,7 +2310,7 @@ void ADonNavigationManager::ReceiveAsyncNavigationTasks()
 
 void ADonNavigationManager::AbortPathfindingTask(AActor* Actor)
 {
-	if (!HasTask(Actor))
+	if (bMultiThreadingEnabled && !HasTask(Actor))
 		return; // no-op. Also essential to prevent multi-threading issues due to superfluous abort requests piling up in the newNavAborts TQueue!
 
 	if (!bMultiThreadingEnabled)
@@ -2454,6 +2478,15 @@ void ADonNavigationManager::PackageDirectSolution(FDonNavigationQueryTask& Task)
 	}
 }
 
+void ADonNavigationManager::CleanupDataForOptimization(FDoNNavigationQueryData& Data)
+{
+	Data.Frontier.empty();
+	Data.VolumeVsCostMap.Empty();
+	Data.VolumeVsGoalTrajectoryMap.Empty();
+	Data.VolumeVsCostMap_Unbound.Empty();
+	Data.VolumeVsGoalTrajectoryMap_Unbound.Empty();
+}
+
 void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, int32 MaxIterationsPerTick)
 {
 	const int32 numTasks = ActiveNavigationTasks.Num();
@@ -2490,18 +2523,19 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 				
 				PackageRawSolution(task); // @FeatureIdea: we can construct a partially optimized solution by merging optimized and unoptimized results.
 
-				VisualizeSolution(data.Origin, data.Destination, data.PathSolutionRaw, data.PathSolutionOptimized, data.DebugParams);
+				VisualizeSolution(data.Origin, data.Destination, data.PathSolutionRaw, data.PathSolutionOptimized, data.DebugParams, FColor::Turquoise);
 
 				data.QueryStatus = EDonNavigationQueryStatus::Success;
 			}			
 			else
 			{
-				UE_LOG(DoNNavigationLog, Error, TEXT("Query timed out for Actor %s. Num iterations : %d"), *data.GetActorName(), data.SolverIterationCount);
+				UE_LOG(DoNNavigationLog, Warning, TEXT("Query timed out for Actor %s. Num iterations : %d"), *data.GetActorName(), data.SolverIterationCount);
 
 				data.QueryStatus = EDonNavigationQueryStatus::TimedOut;
 
 			#if WITH_EDITOR
-				DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
+				if (data.DebugParams.VisualizeOptimizedPath)
+					DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
 			#endif
 			}
 		}
@@ -2531,6 +2565,7 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 				data.QueryStatus = EDonNavigationQueryStatus::QueryHasNoSolution;
 
 				#if WITH_EDITOR
+				if (data.DebugParams.VisualizeOptimizedPath)
 					DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
 				#endif
 			}
@@ -2538,6 +2573,7 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 		
 		if (task.IsQueryComplete())
 		{	
+			CleanupDataForOptimization(data);
 			CompleteNavigationTask(i);
 		}
 	}
@@ -2607,7 +2643,8 @@ void ADonNavigationManager::TickNavigationOptimizerCycle(FDonNavigationQueryTask
 			data.QueryStatus = EDonNavigationQueryStatus::Failure;
 
 			#if WITH_EDITOR
-			DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
+			if (data.DebugParams.VisualizeOptimizedPath)
+				DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
 			#endif
 
 			return;
@@ -2623,7 +2660,7 @@ void ADonNavigationManager::TickNavigationOptimizerCycle(FDonNavigationQueryTask
 
 			PackageRawSolution(task);
 
-			VisualizeSolution(data.Origin, data.Destination, data.PathSolutionRaw, data.PathSolutionOptimized, data.DebugParams);
+			VisualizeSolution(data.Origin, data.Destination, data.PathSolutionRaw, data.PathSolutionOptimized, data.DebugParams, FColor::Orange);
 
 			data.QueryStatus = EDonNavigationQueryStatus::Success;
 		}		
@@ -2923,17 +2960,17 @@ void ADonNavigationManager::VisualizeNAVResult(const TArray<FVector>& PathSoluti
 	}
 }
 
-void ADonNavigationManager::VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams)
+void ADonNavigationManager::VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams, FColor LineColor)
 {
 	if (DebugParams.VisualizeRawPath)
 	{
 		ADonNavigationManager::VisualizeNAVResult(PathSolutionRaw, source, destination, true, DebugParams, FColor::Yellow);
-			
+
 	}
 
 	if (DebugParams.VisualizeOptimizedPath)
 	{
-		ADonNavigationManager::VisualizeNAVResult(PathSolutionOptimized, source, destination, true, DebugParams, FColor::Black);
+		ADonNavigationManager::VisualizeNAVResult(PathSolutionOptimized, source, destination, true, DebugParams, LineColor);
 	}
 }
 

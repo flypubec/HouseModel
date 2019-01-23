@@ -1183,7 +1183,7 @@ public:
 	void VisualizeDynamicCollisionListeners(FDonNavigationDynamicCollisionDelegate Listener, UPARAM(ref) const FDoNNavigationQueryData& QueryData);
 
 	// NAV Visualizer
-	void VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams);
+	void VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams, FColor LineColor = FColor::Black);
 
 	// Logging utility
 	static FString GetMeshLogIdentifier(UPrimitiveComponent* Mesh);
@@ -1239,7 +1239,7 @@ private:
 	// Finite World: (think in terms of Volumes)
 	FDonNavigationVoxel* ResolveVolume(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
 	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
-	FDonNavigationVoxel* GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep);
+	FDonNavigationVoxel* GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep, TMap<FDonNavigationVoxel*, int>& VoxelsVisited);
 
 	// Infinite World: (think in terms of Vectors)
 	bool ResolveVector(FVector &DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
@@ -1262,5 +1262,6 @@ private:
 	void OptimizePathSolution(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);	
 	void OptimizePathSolution_Pass1_LineTrace(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);	
 
+	void CleanupDataForOptimization(FDoNNavigationQueryData& Data);
 	////////////////////////////////////////////////////////////////////////////////////////
 };

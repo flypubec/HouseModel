@@ -73,7 +73,10 @@ struct FBT_FlyToTarget
 		Metadata = FBT_FlyToTarget_Metadata();
 		bSolutionInvalidatedByDynamicObstacle = false;
 		bTargetLocationChanged = false;
+		TimeNavigating = 0;
 	}
+
+	float TimeNavigating = 0;
 };
 
 /**
@@ -150,6 +153,7 @@ public:
 	bool bTeleportToDestinationUponFailure = false;
 
 	// Makeshift arrangement until the Task Owner / Task List discrepancy bug is comprehensively conquered
+	/** Max time before actor is teleported while trying to navigate to next segment. Set this to -1 to disable teleporting*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
 	float MaxTimeBeforeTeleport = 10.f;
 
