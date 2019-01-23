@@ -7,6 +7,7 @@ namespace UnrealBuildTool.Rules
 		public DonAINavigation(ReadOnlyTargetRules Target) : base(Target)
 		{
             PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+            PrivatePCHHeaderFile = "Private/DonAINavigationPrivatePCH.h";
             bEnableShadowVariableWarnings = false;
 
             PublicIncludePaths.AddRange(
