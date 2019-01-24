@@ -1648,7 +1648,7 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	}
 	
 	// 2 b) So we still haven't found an ideal neighbor. It's time to methodically scan for best neighbors:
-	const int32 neighborSearchMaxDepth = 5;
+	const int32 neighborSearchMaxDepth = 4;
 	TMap<FDonNavigationVoxel*, int> VoxelsVisited;
 	FDonNavigationVoxel* result;
 
@@ -1784,7 +1784,7 @@ bool ADonNavigationManager::GetClosestNavigableVector(FVector DesiredLocation, F
 
 	// No solution:
 
-	UE_LOG(DoNNavigationLog, Error, TEXT("Error: GetClosestNavigableVolume failed to resolve a given volume."));
+	UE_LOG(DoNNavigationLog, Error, TEXT("Error: GetClosestNavigableVector failed to resolve a given volume."));
 
 #if WITH_EDITOR
 	DrawDebugSphere_Safe(GetWorld(), DesiredLocation, 64.f, 6.f, FColor::Magenta, true, -1.f);
