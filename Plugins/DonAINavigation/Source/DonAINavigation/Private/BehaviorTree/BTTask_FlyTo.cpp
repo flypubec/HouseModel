@@ -392,7 +392,7 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 	if (MaxTimeBeforeTeleport >= 0 && MyMemory->TimeNavigating > MaxTimeBeforeTeleport)
 	{
 		MyMemory->TimeNavigating = 0;
-		UE_LOG(DoNNavigationLog, Warning, TEXT("Navigation timed-out (Actor probably blocked) for %s. Teleporting to next Segment"), *pawn->GetName());
+		UE_LOG(DoNNavigationLog, Verbose, TEXT("Navigation timed-out (Actor probably blocked) for %s. Teleporting to next Segment"), *pawn->GetName());
 		pawn->SetActorLocation(queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex], false);
 
 		/*
