@@ -153,9 +153,9 @@ public:
 	bool bTeleportToDestinationUponFailure = false;
 
 	// Makeshift arrangement until the Task Owner / Task List discrepancy bug is comprehensively conquered
-	/** Max time before actor is teleported while trying to navigate to next segment. Set this to -1 to disable teleporting*/
+	/** Max time before actor is teleported through an obstacle while trying to navigate to next segment. Set this to -1 to disable teleporting*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	float MaxTimeBeforeTeleport = 10.f;
+	float MaxTimeBeforeTeleport = -1.f;
 
 protected:
 

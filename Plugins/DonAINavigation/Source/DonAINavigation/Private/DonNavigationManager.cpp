@@ -2177,45 +2177,6 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	FVector resolvedOriginCenter = VolumeOriginAt(Origin);
 	FVector resolvedDestinationCenter = VolumeOriginAt(Destination);
 
-	bool bResolvedOrigin = false;
-	bool bResolvedDestination = false;
-
-	if (!bIsUnbound)
-	{
-		// Resolve origin and destination volumes
-		originVolume = ResolveVolume(Origin, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
-		destinationVolume = ResolveVolume(Destination, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);			
-
-		// Input Visualization - II
-		if (DebugParams.DrawDebugVolumes)
-		{
-			if(originVolume)
-				DrawDebugVoxel_Safe(GetWorld(), originVolume->Location, NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
-
-			if(destinationVolume)
-				DrawDebugVoxel_Safe(GetWorld(), destinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
-		}
-	}
-	else
-	{
-		bResolvedOrigin = ResolveVector(Origin, resolvedOriginCenter, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
-		bResolvedDestination = ResolveVector(Destination, resolvedDestinationCenter, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
-	}
-
-	// Input Validations - II
-	if ((!bIsUnbound && (!originVolume || !destinationVolume)) || (bIsUnbound && (!bResolvedOrigin || !bResolvedDestination)))
-	{
-		InvalidVolumeErrorLog(originVolume, destinationVolume, Origin, Destination);
-
-		return false;
-	}
-
-	// Flexible Origin adaptation:
-	if (Origin != Actor->GetActorLocation())
-	{
-		UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
-		Actor->SetActorLocation(Origin, false);
-	}
 
 	// Load voxel collision profile:
 	bool bResultIsValid = false;
@@ -2234,6 +2195,77 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	// Schedule this task
 	AddPathfindingTask(request);
 	
+	return true;
+}
+
+//milky - this could get expensive, therefore it has been moved out of SchedulePathfindingTask() to a function 
+//		  as it is later called from worker thread rather than from Game thread as before.
+bool ADonNavigationManager::SetOriginAndDestination(FDoNNavigationQueryData& data)
+{
+
+	if (bIsUnbound) // Unbound
+	{
+		if (!data.Frontier_Unbound.empty())
+			return true; //Already set - can return
+	}
+	else
+	{
+		if (!data.Frontier.empty()) 
+			return true; //Already set - can return
+	}
+
+	bool bResolvedOrigin = false;
+	bool bResolvedDestination = false;
+
+	if (!bIsUnbound)
+	{
+		// Resolve origin and destination volumes
+		data.OriginVolume = ResolveVolume(data.Origin, data.CollisionComponent.Get(), data.QueryParams.bFlexibleOriginGoal, data.QueryParams.CollisionShapeInflation);
+		data.DestinationVolume = ResolveVolume(data.Destination, data.CollisionComponent.Get(), data.QueryParams.bFlexibleOriginGoal, data.QueryParams.CollisionShapeInflation);
+
+		// Input Visualization - II
+		if (data.DebugParams.DrawDebugVolumes)
+		{
+			if (data.OriginVolume)
+				DrawDebugVoxel_Safe(GetWorld(), data.OriginVolume->Location, NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
+
+			if (data.DestinationVolume)
+				DrawDebugVoxel_Safe(GetWorld(), data.DestinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
+		}
+	}
+	else
+	{
+		bResolvedOrigin = ResolveVector(data.Origin, data.OriginVolumeCenter, data.CollisionComponent.Get(), data.QueryParams.bFlexibleOriginGoal, data.QueryParams.CollisionShapeInflation);
+		bResolvedDestination = ResolveVector(data.Destination, data.DestinationVolumeCenter, data.CollisionComponent.Get(), data.QueryParams.bFlexibleOriginGoal, data.QueryParams.CollisionShapeInflation);
+	}
+
+	// Input Validations - II
+	if ((!bIsUnbound && (!data.OriginVolume || !data.DestinationVolume)) || (bIsUnbound && (!bResolvedOrigin || !bResolvedDestination)))
+	{
+		InvalidVolumeErrorLog(data.OriginVolume, data.DestinationVolume, data.Origin, data.Destination);
+
+		return false;
+	}
+
+	//milky - nedeed to remove this as SetActorLocation can only execute on Game thread
+	//// Flexible Origin adaptation:
+	//if (Origin != Actor->GetActorLocation())
+	//{
+	//	UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
+	//	Actor->SetActorLocation(Origin, false);
+	//}
+
+	if (bIsUnbound) // Unbound
+	{
+		data.Frontier_Unbound.put(data.OriginVolumeCenter, 0);
+		data.VolumeVsCostMap_Unbound.Add(data.OriginVolumeCenter, 0);
+	}
+	else
+	{
+		data.Frontier.put(data.OriginVolume, 0);
+		data.VolumeVsCostMap.Add(data.OriginVolume, 0);
+	}
+
 	return true;
 }
 
@@ -2541,34 +2573,42 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 		}
 		else
 		{
-			int32 iterationsProcessed = 1;
-
-			// Core pathfinding algorithm
-			while (!data.bGoalFound && iterationsProcessed <= maxIterationsPerTask)
+			if (SetOriginAndDestination(data))
 			{
-				TickNavigationSolver(task);
-				iterationsProcessed++;
+				int32 iterationsProcessed = 1;
+
+				// Core pathfinding algorithm
+				while (!data.bGoalFound && iterationsProcessed <= maxIterationsPerTask)
+				{
+					TickNavigationSolver(task);
+					iterationsProcessed++;
+				}
+
+				data.SolverTimeTaken += DeltaSeconds;
+
+				// Is pathfinding complete?
+				if (data.bGoalFound)
+				{
+					TickNavigationOptimizerCycle(task, iterationsProcessed, maxIterationsPerTask);
+				}
+				// Or path has no solution?
+				else if (data.Frontier.empty() && data.Frontier_Unbound.empty())
+				{
+					UE_LOG(DoNNavigationLog, Error, TEXT("No pathfinding solution exists for query %s, %s"), *data.GetActorName(), *data.Destination.ToString());
+
+					data.QueryStatus = EDonNavigationQueryStatus::QueryHasNoSolution;
+
+#if WITH_EDITOR
+					if (data.DebugParams.VisualizeOptimizedPath)
+						DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
+#endif
+				}
+			}
+			else
+			{
+				data.QueryStatus = EDonNavigationQueryStatus::QueryHasNoSolution;				
 			}
 
-			data.SolverTimeTaken += DeltaSeconds;
-
-			// Is pathfinding complete?
-			if (data.bGoalFound)
-			{
-				TickNavigationOptimizerCycle(task, iterationsProcessed, maxIterationsPerTask);
-			}
-			// Or path has no solution?
-			else if (data.Frontier.empty() && data.Frontier_Unbound.empty())
-			{
-				UE_LOG(DoNNavigationLog, Error, TEXT("No pathfinding solution exists for query %s, %s"), *data.GetActorName(), *data.Destination.ToString());
-
-				data.QueryStatus = EDonNavigationQueryStatus::QueryHasNoSolution;
-
-				#if WITH_EDITOR
-				if (data.DebugParams.VisualizeOptimizedPath)
-					DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
-				#endif
-			}
 		}
 		
 		if (task.IsQueryComplete())

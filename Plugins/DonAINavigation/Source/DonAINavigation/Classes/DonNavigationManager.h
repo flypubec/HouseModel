@@ -1220,6 +1220,7 @@ private:
 	bool PrepareDynamicCollisionTask(FDonNavigationDynamicCollisionTask& task, bool &bOverallStatus);
 	void CompleteNavigationTask(int32 TaskIndex);
 	void CompleteCollisionTask(const int32 TaskIndex, bool bIsSuccess);
+	bool ADonNavigationManager::SetOriginAndDestination(FDoNNavigationQueryData& data);
 
 	void AbortPathfindingTask_Internal(AActor* Actor);
 	void AbortPathfindingTaskByIndex(int32 TaskIndex);	
